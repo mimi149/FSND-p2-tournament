@@ -2,8 +2,11 @@
 # 
 # tournament.py -- implementation of a Swiss-system tournament
 #
-
+from random import randint
+from math import log, ceil
 import psycopg2
+
+MAX_ROUND = 10
 
 def connect():
 	"""Connect to the PostgreSQL database.  Returns a database connection."""
@@ -11,111 +14,197 @@ def connect():
 
 def deleteMatches():
 	"""Remove all the match records from the database."""
-
 	conn = connect()
 	c = conn.cursor()
+	c.execute("delete from OneRoundMatches;")
 	c.execute("delete from Matches;")
 	conn.commit()
 	conn.close()
 
 def deletePlayers():
 	"""Remove all the player records from the database."""
-
 	conn = connect()
 	c = conn.cursor()
+	c.execute("delete from OneRoundMatches;")
+	c.execute("delete from Matches;")
 	c.execute("delete from Players cascade;")
 	conn.commit()
 	conn.close()
 
-def countPlayers():
-	"""Returns the number of players currently registered."""
-
+def countPlayers(tourNum):
+	"""Returns the number of players currently registered for the tournament "tourNum"."""
 	conn = connect()
 	c = conn.cursor()
-	c.execute("select count(*) from Players;")
-	row = c.fetchone()
+	c.execute("select count(*) from Players_Tournaments where tourNumber = %s;", (tourNum,))
+	count = c.fetchone()[0]
 	conn.commit()
 	conn.close()
-	return row[0]
+	return count
 
 def registerPlayer(name):
 	"""Adds a player to the tournament database.
-
-	The database assigns a unique serial id number for the player.  (This
-	should be handled by your SQL database schema, not in your Python code.)
-
+	The database assigns a unique serial id number for the player.
+    
 	Args:
 		name: the player's full name (need not be unique).
+	
+	Return: the id of the new player.
 	"""
 	conn = connect()
 	c = conn.cursor()
-	c.execute("insert into Players (id, name) values (DEFAULT, %s)", (name,))
+
+	c.execute("insert into Players (id, name) values (DEFAULT, %s) returning id", (name,))
+	player_id = c.fetchone()[0]
+
 	conn.commit()
 	conn.close()
+	return player_id
 
-def playerStandings():
-	"""Returns a list of the players and their win records, sorted by wins.
+
+def playerStandings(tourNum, roundNum = MAX_ROUND):
+	"""Returns a list of the players and their win records at the end of the round "roundNum"
+	of the tournament "tourNum", sorted by wins and the total wins of the player's opponents.
 
 	The first entry in the list should be the player in first place, or a player
 	tied for first place if there is currently a tie.
 
 	Returns:
-	  A list of tuples, each of which contains (id, name, wins, matches):
+	  A list of tuples, each of which contains (id, name, wins, opp_wins, matches):
 		id: the player's unique id (assigned by the database)
 		name: the player's full name (as registered)
 		wins: the number of matches the player has won
+		opp_wins: the number of matches the player's opponents has won
 		matches: the number of matches the player has played
 	"""
 	conn = connect()
 	c = conn.cursor()
-	c.execute("create view play_view (id, name, match_number) as select p.id, name, count(win) \
-        from Players p left join Matches m \
+
+	""" players_view and matches_view will have data for tournament "tourNum" and 
+	all the rounds not after "roundNum."""
+
+	c.execute("create view players_view (id, name) as (select * from Players p where p.id in \
+			(select pt.player_id from Players_Tournaments pt where tourNumber = %s));", (tourNum,))
+
+#	c.execute("select * from players_view;")
+#	seeRows("players_view: id, name", c.fetchall())"""
+
+	c.execute("create view matches_view (roundNumber, p1, p2, win) as \
+				(select roundNumber, p1, p2, win from Matches where tourNumber = %s and \
+					roundNumber <= %s);", (tourNum, roundNum))
+
+#	c.execute("select * from matches_view;")
+#	seeRows("matches_view: roundNumber, p1, p2, win", c.fetchall())"""
+
+	""" Calculate the number of matches for each player, eliminate the dummy player with id = 0."""
+
+	c.execute("create view matches_number_view (id, name, matches) as select p.id, name, count(win) \
+		from players_view p left join (select * from matches_view where p1 != 0 and p2 != 0) m \
 		on (p.id = m.p1) or (p.id = m.p2) \
 		group by p.id, name;")
 
-	c.execute("create view win_view (id, name, win_number) as select p.id, name, count(m.win) \
-        from Players p left join Matches m \
+#	c.execute("select * from matches_number_view;")
+#	seeRows("matches_number_view: id, name, matches", c.fetchall())
+
+	""" Calculate the number of win for each player."""
+
+	c.execute("create view wins_view (id, name, wins) as select p.id, name, count(m.win) \
+		from players_view p left join matches_view m \
 		on (p.id = m.win) \
 		group by p.id, name;")
 
-	c.execute("select play_view.id, play_view.name, win_number, match_number \
-        from play_view join win_view \
-		on play_view.id = win_view.id \
-		order by win_number desc;")
+#	c.execute("select * from wins_view;")
+#	seeRows("wins_view: id, name, wins", c.fetchall())
+
+	""" Calculate the number of win for each player's opponents."""
+
+	c.execute("create view opponent_wins_view (id, opp_win) as \
+			select p.id, w.wins from players_view p, wins_view w \
+			where w.id in ((select p1 from matches_view where p2 = p.id) \
+									union \
+							(select p2 from matches_view where p1 = p.id));")
+
+#	c.execute("select * from opponent_wins_view;")
+#	seeRows("opponent_wins_view: id, opp_win", c.fetchall())
+
+	c.execute("create view total_opponent_wins_view (id, opp_wins) as select id, sum(opp_win) \
+				from opponent_wins_view \
+				group by id;")
+
+#	c.execute("select * from total_opponent_wins_view;")
+#	seeRows("total_opponent_wins_view: id, opp_wins", c.fetchall())
+
+	""" Collect info for the standing list."""
+
+	c.execute("select t1.id, name, wins, opp_wins, matches from \
+		(select p.id as id, p.name as name, wins, matches \
+		from matches_number_view p left join wins_view w\
+		on p.id = w.id) t1 \
+		left join total_opponent_wins_view t2 \
+		on t1.id = t2.id \
+		order by wins desc, opp_wins desc;")
 	standing = c.fetchall()
 
-	c.execute("drop view play_view;")
-	c.execute("drop view win_view;")
+	c.execute("drop view total_opponent_wins_view;")
+	c.execute("drop view opponent_wins_view;")
+	c.execute("drop view wins_view;")
+	c.execute("drop view matches_number_view;")
+	c.execute("drop view matches_view;")
+	c.execute("drop view players_view;")
+
+	standingList = [row for row in standing if row[0] != 0] # eliminate Dummy player if exists.
+
+#	seeRows("standing list: id, name, wins, opp_wins, matches", standingList)
 	conn.commit()
 	conn.close()
+	return standingList
 
-	return standing
-
-def reportMatch(winner, loser):
+def reportMatch(p1, p2, result):
 	"""Records the outcome of a single match between two players.
-
+	This function use OneRoundMatches table to ensure an eligible match between the two players.
+	(p1 < p2, and (p1, p2) is the primary key of the table.)
 	Args:
-		winner:  the id number of the player who won
-		loser:  the id number of the player who lost
+		p1, p2 :  the id number of the players
+		result=-1 for the draw match, otherwise, result is the id number of the winner.
 	"""
+
 	conn = connect()
 	c = conn.cursor()
-	if winner == loser:
+
+	if p1 == p2:
 		raise ValueError("The players must be the two different players.")
-    
-	c.execute("insert into Matches values (DEFAULT, {0}, {1}, {2})".format(winner, loser, winner))
+	elif p1 > p2:
+		p = p1
+		p1 = p2
+		p2 = p
+
+	c.execute("insert into OneRoundMatches values ({0}, {1}, {2})".format(p1, p2, result))
 	conn.commit()
 	conn.close()
- 
-def swissPairings():
+
+def swissPairings(tourNum):
+	""" Call function playerStandings"""
+	
 	"""Returns a list of pairs of players for the next round of a match.
 
-	Assuming that there are an even number of players registered, each player
-	appears exactly once in the pairings.  Each player is paired with another
+	The playersList is taken from the Players_Tournaments table for that tournament "tourNum".
+
+	If there were some rounds of that tournament, the playersList will be updated from the standingList.
+
+	Each player appears exactly once in the pairings.  Each player is paired with another
 	player with an equal or nearly-equal win record, that is, a player adjacent
 	to him or her in the standings.
 
-	Returns:
+	If the player number is odd:
+		- A player is set to a "bye player" by random.
+		- Once someone is set to a bye player, the info is written to the Players_Tournaments table, 
+			to ensure that he or she is a bye player no more than one time in a tournament.
+		- The pairingList will be added a pair of that bye player with the dummy player.
+		- The playersList will be eliminated that player.
+
+		(A dummy player is a player with the id = 0, it is inserted to the Players table at the begining 
+		to be used in some algorithms in the program) 
+	
+	Returns the pairingList:
 		A list of tuples, each of which contains (id1, name1, id2, name2)
 		id1: the first player's unique id
 		name1: the first player's name
@@ -125,15 +214,316 @@ def swissPairings():
 	conn = connect()
 	c = conn.cursor()
 
-	standings = playerStandings()
 	pairingList = []
-	for i,row in enumerate(standings):
+
+	c.execute("select p.id, name, bye from players p join Players_Tournaments pt on p.id = pt.Player_id \
+				where tourNumber = %s and p.id <> 0;", (tourNum,))
+	playersList = c.fetchall()
+	byePlayer = 0       # byePlayer will be set to the id of the choosen bye player.
+						# Actually, we always found the new byePlayer because 
+						# the number of rounds is equal ceil(log2(playerNum)). 
+						# So the loop will never be infinite loop.
+
+	playerNum = len(playersList)
+	if playerNum % 2 != 0:
+		r = randint(0, playerNum - 1)
+		count = 0
+		while byePlayer == 0: 
+			if playersList[r][2] == 0: # The bye attribute is still equal 0 in this tournament.
+				byePlayer = playersList[r][0] # The id of the chosen bye player.
+
+				pair = (playersList[r][0], playersList[r][1], 0, "") 
+				pairingList.append(pair) # for the bye player with the dummy player.
+
+				c.execute("update Players_Tournaments set bye = 1 \
+						where player_id = %s and tourNumber = %s;", (playersList[r][0], tourNum,))
+
+				playersList = playersList[0:r] + playersList[r+1:] # eliminate the bye player.
+
+			else:
+				r +=1               # try to find another player with bye attribute is still equal 0.
+				if r == playerNum:
+					r = 0
+			count += 1
+
+			if count > playerNum:
+				raise ValueError("The round number is over the actual available round of the tournament.")
+
+	# Check if it is the first round of the tournament:
+	
+	c.execute("select * from Matches where tourNumber = %s;", (tourNum,))
+	rows = c.fetchall()
+	if len(rows) > 0: # There are some rounds of this tournament, take the standingList:
+		standingList = playerStandings(tourNum)
+		if byePlayer != 0: # There is a byePlayer that must not be in the playersList.
+			playersList = []
+			for row in standingList:
+				if row[0] != byePlayer:
+					playersList.append((row[0], row[1], 0))
+		else:
+			playersList = standingList
+
+	for i,row in enumerate(playersList):
 		if i%2 == 0:
 			[c1, c2] = [row[0], row[1]]
 		else:
 			[c3, c4] = [row[0], row[1]]
-			c = (c1,c2,c3,c4)
-			pairingList.append(c)
+			pair = (c1,c2,c3,c4)
+			pairingList.append(pair)
 	conn.commit()
 	conn.close()
 	return pairingList
+
+def addPlayers(tourNum):
+	""" Call function registerPlayer.
+
+		All of the players of one tournament must be added at one time to commit, 
+		otherwise, they might be aborted manually."""
+
+	print '\n\n Register for players: '
+
+	conn = connect()
+	c = conn.cursor()
+	playerNumber = raw_input("\nEnter the number of players: (>0 and <=16)  ")
+	print "\n------------------------------------------------------------------------------\n"
+
+	playerNumber = int(playerNumber)
+	if playerNumber <= 0 or playerNumber > 16:
+		raise ValueError("\nYou enter a wrong number.")
+	if playerNumber % 2 != 0: # Add a dummy player to this tournament.
+		c.execute("insert into Players_Tournaments values (%s, 0, 0);", (tourNum,))
+
+	for i in range(playerNumber):
+		print "\n 1 - Add a new player."
+		print "\n 2 - Choose an existent player."
+		option = raw_input("\nChoose your option: ")
+		print "\n------------------------------------------------------------------------------\n"
+
+		if option == '1':
+			name = raw_input("Enter the name of the player {0}:".format(i+1))
+			print "\n------------------------------------------------------------------------------\n"
+			player_id = registerPlayer(name)
+		else:
+			player_id = raw_input("Enter the id of the exist player: ")
+			print "\n------------------------------------------------------------------------------\n"
+
+			player_id = int(player_id)
+			c.execute("select id, name from Players where id = %s", (player_id,))
+			player = c.fetchone()
+			if player == None:
+				raise ValueError("The required id is not exist.")
+		c.execute("insert into Players_Tournaments values (%s, %s, 0)", (tourNum,player_id,))
+		conn.commit()
+	conn.close()
+
+def recordMatchesResult(pairingList, roundNumber, tourNum):
+	""" Call function: reportMatch.
+		
+		All match results of one round should be reported at one time to commit,
+		otherwise, they might be aborted by the option delete all matches of the last round."""
+
+	conn = connect()
+	c = conn.cursor()
+
+	print '\n\n Report match results: '
+
+	c.execute("delete from OneRoundMatches")
+	
+	for row in pairingList:
+		if row[2] == 0: # a byePlayer is paired with the Dummy player with id = 0. 
+			reportMatch(0, row[0], row[0])
+			continue
+		print '\n                           ', row
+		result = raw_input("Enter '{0}' (if player '{1}' won), \n  or  '{2}' (if player '{3}' won), \n  or  -1 (if draw)  \n \
+		".format(row[0], row[0], row[2], row[2]))
+		print "\n------------------------------------------------------------------------------\n"
+
+		result = int(result)
+		if result in [-1,row[0], row[2]]:
+			reportMatch(row[0], row[2], result)
+		else:
+			raise ValueError("You entered a wrong number.")
+	
+	# Copy data of the new round to Matches table.
+	c.execute("select * from oneRoundMatches;")
+	rows = c.fetchall()
+	for row in rows:
+		c.execute("insert into Matches values (%s, %s, %s, %s, %s)", \
+					(tourNum, roundNumber, row[0], row[1], row[2],))
+
+	c.execute("delete from OneRoundMatches") # complete record all the match results for one round.
+
+	conn.commit()
+	conn.close()
+
+def deleteLastRound(tourNum):
+	""" Delete all the match record of the last round of the tournament tourNum"""
+
+	conn = connect()
+	c = conn.cursor()
+
+	c.execute("select max(roundNumber) from Matches where tourNumber = %s;", (tourNum,))
+	roundNumber = c.fetchone()
+	if roundNumber[0] == None:
+		print "\n There was not any round of that tournament."
+	else:
+		c.execute("delete from Matches where tourNumber = %s and roundNumber = %s;", \
+					(tourNum, int(roundNumber[0])))
+	conn.commit()
+	conn.close()
+
+""" Below are the functions for the test running.""" 
+"""=============================================="""
+
+def selectTour():
+	""" Call function selectRound"""
+
+	conn = connect()
+	c = conn.cursor()
+	c.execute("select * from Tournaments;")
+	tours = c.fetchall()
+
+	print '\n   Tournament List:'
+	for tour in tours:
+		print '\n  ', tour[0], ' - ', tour[1]
+	print '\n\n\n   0  -  Make a new tournament'
+	print '\n  -1  -  Delete all information of one tournament.'
+
+	tourNum = raw_input("\nChoose your option (the id of the tournament or '0' or '-1'): ")
+	print "\n------------------------------------------------------------------------------\n"
+	tourNum = int(tourNum)
+
+	if tourNum == 0:
+		name = raw_input("\nEnter the name of the new tournament: ")
+		print "\n------------------------------------------------------------------------------\n"
+
+		c.execute("insert into Tournaments (id, name) values (DEFAULT, %s) returning id;", (name,))
+		tourNum = c.fetchone()[0]
+		conn.commit()
+		addPlayers(tourNum)
+	
+	elif tourNum == -1:
+		delete_id = raw_input("\nEnter the id of an existent tournament: ")
+		print "\n------------------------------------------------------------------------------\n"
+
+		c.execute("delete from Matches where tourNumber = %s", (delete_id,))
+		c.execute("delete from Players_Tournaments where tourNumber = %s", (delete_id,))
+		c.execute("delete from Tournaments where id = %s", (delete_id,))
+
+	elif (tourNum < 0) or (tourNum not in [row[0] for row in tours]):
+		raise ValueError("You enter a wrong number. ") 
+
+	else:
+		selectRound(tourNum)
+	conn.commit()
+	conn.close()
+	return
+
+def selectRound(tourNum):
+	""" Call function addPlayer, oldRound, newRound, deleteLastRound"""
+	
+	conn = connect()
+	c = conn.cursor()
+
+	c.execute("select max(roundNumber) from Matches where tourNumber = %s;", (tourNum,))
+	roundNumber = c.fetchone()
+
+	if roundNumber[0] == None:
+		roundNumber = 0
+	else:
+		roundNumber = int(roundNumber[0])
+		
+	c.execute("select * from Tournaments where id = %s;", (tourNum,))
+	print "\n Welcome to the tournament ", c.fetchone()[1]
+	
+	print "\n There have already been ", roundNumber," rounds."
+
+	print "\n\n 1- See an existent round."
+	print "\n 2- Make a new round."
+	print "\n 3- Delete all the match results of the last round."
+
+	option = raw_input("\nChoose your option: ")
+	print "\n------------------------------------------------------------------------------\n"
+
+	if option == '1':
+		oldRound(roundNumber, tourNum)
+	elif option == '2':
+		max_round = log(countPlayers(tourNum),2)
+		if roundNumber >= ceil(max_round):
+			raise ValueError("There has already been the final round.")
+		newRound(roundNumber+1, tourNum)
+	elif option == '3':
+		deleteLastRound(tourNum)
+	else:
+		raise ValueError("You must enter 1 or 2 or 3.")
+	conn.commit()
+	conn.close()
+
+def oldRound(roundNum, tourNum):
+	""" Call function seeMatches, playerStandings, seeRows"""
+	
+	conn = connect()
+	c = conn.cursor()
+	roundNumber = raw_input("\nEnter the number of the round you want to see (>0 and <={0}): "\
+							.format(roundNum))
+	print "\n------------------------------------------------------------------------------\n"
+
+	roundNumber = int(roundNumber)
+	if roundNumber > roundNum or roundNumber < 1:
+		raise ValueError("\nThe round number must be > 0 and <= {0}.".format(roundNum))
+	else:
+		seeMatches(roundNumber, tourNum)
+		standingList = playerStandings(tourNum, roundNumber)
+		seeRows("standing list: id, name, wins, opp_wins, matches", standingList)
+
+	conn.commit()
+	conn.close()
+
+def newRound(roundNumber, tourNum):
+	""" Call function swissPairings, recordMatchesResult, seeMatches, playerStandings, seeRows"""
+
+	conn = connect()
+	c = conn.cursor()
+
+	pairingList = swissPairings(tourNum)
+	
+	recordMatchesResult(pairingList, roundNumber, tourNum)
+
+	seeMatches(roundNumber, tourNum)
+	standingList = playerStandings(tourNum)
+	seeRows("standing list: id, name, wins, opp_wins, matches", standingList)
+	conn.commit()
+	conn.close()
+
+def seeMatches(roundNum, tourNum):
+	""" Show match info of the round "roundNum" of the tournament "tourNum" """
+
+	conn = connect()
+	c = conn.cursor()
+	c.execute("select * from Matches where roundNumber <= %s and tourNumber = %s;", (roundNum, tourNum,))
+	rows = c.fetchall()
+	seeRows("Matches table (tourNumber, round number, player1, player2, the winner (-1 means draw)):", rows)
+	conn.commit()
+	conn.close()
+
+def seeRows(rowsName, rows):
+	print '\n', rowsName
+	for row in rows:
+		print row
+
+def	showData():
+	conn = connect()
+	c = conn.cursor()
+	print "\n------------------------------------------------------------------------------\n"
+	print '\n Existent data:'
+	c.execute("SELECT * FROM Players;")
+	seeRows("Players: id, name", c.fetchall())
+	c.execute("SELECT * FROM tournaments;")
+	seeRows("Tournaments: tourNumber, name", c.fetchall())
+	c.execute("SELECT * FROM players_tournaments;")
+	seeRows("Players_Tournaments: tourNumber, player_id", c.fetchall())
+	raw_input("Press Enter to continue")
+	print "\n------------------------------------------------------------------------------\n"
+
+	conn.commit()
+	conn.close()
