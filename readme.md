@@ -1,8 +1,8 @@
-﻿## p2_tournament
+﻿## p2_tournament (Tournament Planner)
 
 Project 2 for Udacity's Full Stack Developer Nanodegree Program
 
-### Project Description: Tournament Planner
+### Project Description:
 
 This project has a Python module that uses the PostgreSQL database to keep track of players and matches in game tournaments.
 
@@ -50,19 +50,19 @@ Players are not eliminated, and each player should be paired with another player
 
 ### Project Package
 
-**README.md**: this file.
+  - **README.md**: this file.
 
-**tournament.sql**: contains all the commands to create tournament database. You can see the explanation of database design here.
+  - **tournament.sql**: contains all the commands to create tournament database. You can see the explanation of database design here.
 
-**tournament.py**: contains all the necessary functions.
+  - **tournament.py**: contains all the necessary functions.
 
-**tournament_test.py**: contains the main menu function.
+  - **tournament_test.py**: contains the main menu function.
 
-**pg_config.sh**: helps to create the virtual machine and install PostgreSQL when running vagrant up.
+  - **pg_config.sh**: helps to create the virtual machine and install PostgreSQL when running vagrant up.
 
 ### Project Usage
 
-1. First, you need to install VirtualBox (https://www.virtualbox.org/wiki/Downloads) and Vagrant (href="https://www.vagrantup.com/downloads) to your machine.
+1. First, you need to install [VirtualBox](https://www.virtualbox.org/wiki/Downloads), [Vagrant](https://www.vagrantup.com/downloads) , and [Python 2.7](http://blog.python.org/2015/05/python-2710-released.html?utm_source=feedburner&utm_medium=feed&utm_campaign=Feed%3A+PythonInsider+%28Python+Insider%29) to your machine.
 2. Next, clone this repo and navigate to the project folder:
 ```
 	$ cd p2_tournament/
