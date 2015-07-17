@@ -1,0 +1,64 @@
+﻿## p2_tournament (Tournament Planner)
+
+Project 2 for Udacity's Full Stack Developer Nanodegree Program
+
+### Project Description:
+
+This project has a Python module that uses the PostgreSQL database to keep track of players and matches in game tournaments.
+
+The game tournament uses the Swiss system for pairing up players in each round.
+Players are not eliminated, and each player should be paired with another player with the same number of wins, or as close as possible.
+
+##### The first version of this program (in the unit_test branch) can pass these tests:
+1. deleteMatches: Remove all the matches records from the database.
+2. deletePlayers: Remove all the player records from the database.
+3. countPlayers: Returns the number of players currently registered.
+4. registerPlayer: Adds a player to the tournament database.
+5. playerStandings: Returns a list of the players and their win records, sorted by wins.
+6. reportMatch: This is to simply populate the matches table and record the winner and loser as (winner,loser) in the insert statement.
+7. swissPairings: Returns a list of pairs of players for the next round of a match.
+
+##### The second version of this program is in the master branch.
+
+### Project Package
+
+  - **README.md**: this file.
+
+  - **tournament.sql**: contains all the commands to create tournament database. You can see the explanation of database design here.
+
+  - **tournament.py**: contains all the necessary functions.
+
+  - **tournament_test.py**: contains the main function for unit test.
+
+  - **pg_config.sh**: helps to create the virtual machine and install PostgreSQL when running vagrant up.
+
+### Project Usage
+
+1. First, you need to install [VirtualBox](https://www.virtualbox.org/wiki/Downloads), [Vagrant](https://www.vagrantup.com/downloads) , and [Python 2.7](http://blog.python.org/2015/05/python-2710-released.html?utm_source=feedburner&utm_medium=feed&utm_campaign=Feed%3A+PythonInsider+%28Python+Insider%29) to your machine.
+2. Next, clone this repo and navigate to the project folder:
+```
+	$ cd p2_tournament/
+```
+3. Type vagrant up to launch your virtual machine. This will take some time in your first run, because it needs to install some dependencies.
+```
+	p2_tournament$vagrant up
+```
+4. Once it is up and running, type vagrant ssh to log into it. This will log your terminal in to the virtual machine, and you'll get a Linux shell prompt.
+```
+	p2_tournament$vagrant ssh
+```
+5. On your virtual machine, go to /vagrant/p2_tournament folder and create the database by running psql.
+```
+	~$cd /vagrant/p2_tournament
+	/vagrant/p2_tournament$ psql
+	vagrant=> \i tournament.sql
+	tournament=> \q
+```
+
+6. Run the program.
+
+```
+	/vagrant/p2_tournament$python tournament_test.py
+```
+
+
